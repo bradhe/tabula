@@ -1,0 +1,6 @@
+#
+# Development artifacts
+#
+/target
+/Cargo.lock
+*.sw[onp]
