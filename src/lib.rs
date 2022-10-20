@@ -10,6 +10,9 @@ pub enum Error {
 
     #[snafu(display("invalid record length"))]
     InvalidRecordLength,
+
+    #[snafu(display("failed to write data"))]
+    WriteFailed,
 }
 
 #[derive(Debug, PartialEq)]
@@ -28,6 +31,29 @@ pub enum ColumnDataType {
 pub struct Column {
     pub name: String,
     pub data_type: ColumnDataType,
+}
+
+fn encode_usize_varint(_s: usize) -> Vec<u8> {
+    Vec::new()
+}
+
+fn encode_string(s: &str) -> Vec<u8> {
+    let mut res = Vec::new();
+    res.extend(encode_usize_varint(s.len()));
+    res.extend(s.as_bytes());
+    res
+}
+
+impl Column {
+    pub fn read_from(_read: &mut impl std::io::Read) -> Result<Self, Error> {
+        Err(Error::NotImplemented)
+    }
+
+    pub fn to_vec(&self) -> Vec<u8> {
+        let mut res = Vec::new();
+        res.extend(encode_string(&self.name));
+        res
+    }
 }
 
 pub struct TabulaReader<T: std::io::Read> {
@@ -52,13 +78,22 @@ impl<T: std::io::Read> TabulaReader<T> {
     }
 }
 
-pub struct TabulaWriter<T: std::io::Write> {
+pub struct TabulaWriter<T: std::io::Write + std::io::Seek> {
     cols: Vec<Column>,
     write: T,
 }
 
-impl<T: std::io::Write> TabulaWriter<T> {
-    pub fn new(columns: &[Column], write: T) -> Result<Self, Error> {
+impl<T: std::io::Write + std::io::Seek> TabulaWriter<T> {
+    pub fn new(columns: &[Column], mut write: T) -> Result<Self, Error> {
+        if let Err(_err) = write.seek(std::io::SeekFrom::Start(0)) {
+            // TODO: Do something with this error.
+            return Err(Error::WriteFailed);
+        } else {
+            for col in columns {
+                write.write_all(&col.to_vec()).unwrap();
+            }
+        }
+
         Ok(Self {
             cols: columns.to_vec(),
             write,
@@ -104,7 +139,9 @@ mod tests {
 
     #[test]
     fn it_works() {
-        let buf = Vec::new();
+        // buffer should be big enough to fit the whole test.
+        let mut buf = vec![0u8; 10000];
+
         let columns = vec![
             Column {
                 name: "Column1".to_string(),
