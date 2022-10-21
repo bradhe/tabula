@@ -40,6 +40,15 @@ impl ColumnDataType {
             ColumnDataType::Number => vec![0x02; 1],
         }
     }
+
+    pub fn read_from(read: &mut impl Read) -> Self {
+        let b = read.bytes().next().and_then(|result| result.ok()).unwrap();
+        match b {
+            0x01 => ColumnDataType::String,
+            0x02 => ColumnDataType::Number,
+            3_u8..MAX => panic!("unknown type"),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -49,14 +58,16 @@ pub struct Column {
 }
 
 impl Column {
-    pub fn read_from(_read: &mut impl Read) -> Result<Self, Error> {
+    pub fn read_from(read: &mut impl Read) -> Result<Self, Error> {
+        // this is the column type
+
         Err(Error::NotImplemented)
     }
 
     pub fn to_vec(&self) -> Vec<u8> {
         let mut res = Vec::new();
-        res.extend(encode::string(&self.name));
         res.extend(self.data_type.to_vec());
+        res.extend(encode::string(&self.name));
         res
     }
 }
