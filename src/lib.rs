@@ -1,4 +1,7 @@
 use snafu::Snafu;
+use std::io::{Read, Seek, Write};
+
+mod encode;
 
 #[derive(PartialEq, Debug, Snafu)]
 pub enum Error {
@@ -13,6 +16,9 @@ pub enum Error {
 
     #[snafu(display("failed to write data"))]
     WriteFailed,
+
+    #[snafu(display("invalid cell type"))]
+    InvalidCellType,
 }
 
 #[derive(Debug, PartialEq)]
@@ -27,42 +33,42 @@ pub enum ColumnDataType {
     Number,
 }
 
+impl ColumnDataType {
+    pub fn to_vec(&self) -> Vec<u8> {
+        match self {
+            ColumnDataType::String => vec![0x01; 1],
+            ColumnDataType::Number => vec![0x02; 1],
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct Column {
     pub name: String,
     pub data_type: ColumnDataType,
 }
 
-fn encode_usize_varint(_s: usize) -> Vec<u8> {
-    Vec::new()
-}
-
-fn encode_string(s: &str) -> Vec<u8> {
-    let mut res = Vec::new();
-    res.extend(encode_usize_varint(s.len()));
-    res.extend(s.as_bytes());
-    res
-}
-
 impl Column {
-    pub fn read_from(_read: &mut impl std::io::Read) -> Result<Self, Error> {
+    pub fn read_from(_read: &mut impl Read) -> Result<Self, Error> {
         Err(Error::NotImplemented)
     }
 
     pub fn to_vec(&self) -> Vec<u8> {
         let mut res = Vec::new();
-        res.extend(encode_string(&self.name));
+        res.extend(encode::string(&self.name));
+        res.extend(self.data_type.to_vec());
         res
     }
 }
 
-pub struct TabulaReader<T: std::io::Read> {
+pub struct TabulaReader<T: Read> {
     cols: Vec<Column>,
     read: T,
 }
 
-impl<T: std::io::Read> TabulaReader<T> {
+impl<T: Read> TabulaReader<T> {
     pub fn new(read: T) -> Result<Self, Error> {
+        // let's see about getting the columns out.
         Ok(Self {
             cols: Vec::new(),
             read,
@@ -78,12 +84,36 @@ impl<T: std::io::Read> TabulaReader<T> {
     }
 }
 
-pub struct TabulaWriter<T: std::io::Write + std::io::Seek> {
+fn write_string_cell<T: Write>(write: &mut T, cell: &Cell) -> Result<(), Error> {
+    if let Cell::String(val) = cell {
+        if let Err(_err) = write.write(&encode::string(&val)) {
+            Err(Error::WriteFailed)
+        } else {
+            Ok(())
+        }
+    } else {
+        Err(Error::InvalidCellType)
+    }
+}
+
+fn write_number_cell<T: Write>(write: &mut T, cell: &Cell) -> Result<(), Error> {
+    if let Cell::Number(val) = cell {
+        if let Err(_err) = write.write(&encode::number(val)) {
+            Err(Error::WriteFailed)
+        } else {
+            Ok(())
+        }
+    } else {
+        Err(Error::InvalidCellType)
+    }
+}
+
+pub struct TabulaWriter<T: Write + Seek> {
     cols: Vec<Column>,
     write: T,
 }
 
-impl<T: std::io::Write + std::io::Seek> TabulaWriter<T> {
+impl<T: Write + Seek> TabulaWriter<T> {
     pub fn new(columns: &[Column], mut write: T) -> Result<Self, Error> {
         if let Err(_err) = write.seek(std::io::SeekFrom::Start(0)) {
             // TODO: Do something with this error.
@@ -104,22 +134,14 @@ impl<T: std::io::Write + std::io::Seek> TabulaWriter<T> {
         self.cols.to_vec()
     }
 
-    fn write_string_cell(&self, _cell: &Cell) -> Result<(), Error> {
-        Err(Error::NotImplemented)
-    }
-
-    fn write_number_cell(&self, _cell: &Cell) -> Result<(), Error> {
-        Err(Error::NotImplemented)
-    }
-
-    pub fn write_record(&self, cells: &[Cell]) -> Result<(), Error> {
+    pub fn write_record(&mut self, cells: &[Cell]) -> Result<(), Error> {
         if cells.len() != self.cols.len() {
             Err(Error::InvalidRecordLength)
         } else {
             for (idx, col) in self.cols.iter().enumerate() {
                 let res = match col.data_type {
-                    ColumnDataType::String => self.write_string_cell(&cells[idx]),
-                    ColumnDataType::Number => self.write_number_cell(&cells[idx]),
+                    ColumnDataType::String => write_string_cell(&mut self.write, &cells[idx]),
+                    ColumnDataType::Number => write_number_cell(&mut self.write, &cells[idx]),
                 };
 
                 if res.is_err() {
@@ -154,7 +176,7 @@ mod tests {
         ];
 
         {
-            let tablua = TabulaWriter::new(&columns, Cursor::new(&mut buf)).unwrap();
+            let mut tablua = TabulaWriter::new(&columns, Cursor::new(&mut buf)).unwrap();
             assert_eq!(tablua.columns().len(), 2);
 
             let res = tablua.write_record(&vec![
@@ -164,8 +186,6 @@ mod tests {
 
             assert_eq!(res, Ok(()));
         }
-
-        //buf.seek(SeekFrom::Start(0));
 
         {
             let tablua = TabulaReader::new(Cursor::new(&mut buf)).unwrap();
