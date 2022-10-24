@@ -134,6 +134,8 @@ impl<T: Write + Seek> TabulaWriter<T> {
       // TODO: Do something with this error.
       return Err(Error::WriteFailed);
     } else {
+      write.write_all(&encode::usize_varint(columns.len())).unwrap();
+
       for col in columns {
         write.write_all(&col.to_vec()).unwrap();
       }

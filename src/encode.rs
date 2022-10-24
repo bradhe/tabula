@@ -1,5 +1,19 @@
-pub fn usize_varint(_s: usize) -> Vec<u8> {
-    Vec::new()
+pub fn uint64_varint(s: i64) -> Vec<u8> {
+  let mut res = Vec::new();
+  let mut val = s;
+
+  while val >= 0x80 {
+    let b: u8 = ((val & 0x7F) as u8) | 0x80;
+    res.push(b);
+
+    val = val >> 7;
+  }
+
+  res
+}
+
+pub fn usize_varint(s: usize) -> Vec<u8> {
+  uint64_varint(s as i64)
 }
 
 pub fn string(s: &str) -> Vec<u8> {
